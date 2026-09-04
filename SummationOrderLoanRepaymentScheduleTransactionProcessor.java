@@ -36,6 +36,11 @@ public class SummationOrderLoanRepaymentScheduleTransactionProcessor extends Abs
     public static final String STRATEGY_CODE = "summation-order-strategy";
     public static final String STRATEGY_NAME = "all fees, all penalties, all interest, all principal";
 
+    private static final int P_PRINCIPAL = 0;
+    private static final int P_INTEREST = 1;
+    private static final int P_FEE = 2;
+    private static final int P_PENALTY = 3;
+
     public SummationOrderLoanRepaymentScheduleTransactionProcessor(ExternalIdFactory externalIdFactory, LoanChargeValidator loanChargeValidator,
                                                                    LoanBalanceService loanBalanceService) {
         super(externalIdFactory, loanChargeValidator, loanBalanceService);
@@ -233,18 +238,19 @@ public class SummationOrderLoanRepaymentScheduleTransactionProcessor extends Abs
         // Second pass: Apply payment according to summation order rules
         Money amountRemaining = transactionAmountUnprocessed;
 
-        // Phase 1: Pay arrears in true summation order (fees across all, then penalties across all, then interest across all, then principal across all)
+        // Phase 1: Pay arrears in summation order across installments (fees, then penalties, then interest,
+        // then principal). Portions are accumulated per installment during the four passes and emitted as a
+        // single mapping row per installment at the end, so that the persisted mapping preserves every
+        // component allocation. Emitting one row per pass would be collapsed by
+        // LoanTransaction.updateLoanTransactionToRepaymentScheduleMappings into the last-written component.
+        Map<LoanRepaymentScheduleInstallment, Money[]> arrearsPortions = new LinkedHashMap<>();
+
         // 1. Pay all fees across arrears installments
         for (LoanRepaymentScheduleInstallment installment : installments) {
             if (isInstallmentInArrears(installment, transactionDate) && amountRemaining.isGreaterThanZero()) {
                 Money feePaid = installment.payFeeChargesComponent(transactionDate, amountRemaining);
                 amountRemaining = amountRemaining.minus(feePaid);
-
-                if (feePaid.isGreaterThanZero()) {
-                    transactionMappings.add(LoanTransactionToRepaymentScheduleMapping.createFrom(
-                            loanTransaction, installment, Money.zero(currency), Money.zero(currency), feePaid, Money.zero(currency)
-                    ));
-                }
+                bumpArrearsPortion(arrearsPortions, installment, P_FEE, feePaid, currency);
             }
         }
 
@@ -253,12 +259,7 @@ public class SummationOrderLoanRepaymentScheduleTransactionProcessor extends Abs
             if (isInstallmentInArrears(installment, transactionDate) && amountRemaining.isGreaterThanZero()) {
                 Money penaltyPaid = installment.payPenaltyChargesComponent(transactionDate, amountRemaining);
                 amountRemaining = amountRemaining.minus(penaltyPaid);
-
-                if (penaltyPaid.isGreaterThanZero()) {
-                    transactionMappings.add(LoanTransactionToRepaymentScheduleMapping.createFrom(
-                            loanTransaction, installment, Money.zero(currency), Money.zero(currency), Money.zero(currency), penaltyPaid
-                    ));
-                }
+                bumpArrearsPortion(arrearsPortions, installment, P_PENALTY, penaltyPaid, currency);
             }
         }
 
@@ -267,12 +268,7 @@ public class SummationOrderLoanRepaymentScheduleTransactionProcessor extends Abs
             if (isInstallmentInArrears(installment, transactionDate) && amountRemaining.isGreaterThanZero()) {
                 Money interestPaid = installment.payInterestComponent(transactionDate, amountRemaining);
                 amountRemaining = amountRemaining.minus(interestPaid);
-
-                if (interestPaid.isGreaterThanZero()) {
-                    transactionMappings.add(LoanTransactionToRepaymentScheduleMapping.createFrom(
-                            loanTransaction, installment, Money.zero(currency), interestPaid, Money.zero(currency), Money.zero(currency)
-                    ));
-                }
+                bumpArrearsPortion(arrearsPortions, installment, P_INTEREST, interestPaid, currency);
             }
         }
 
@@ -281,12 +277,15 @@ public class SummationOrderLoanRepaymentScheduleTransactionProcessor extends Abs
             if (isInstallmentInArrears(installment, transactionDate) && amountRemaining.isGreaterThanZero()) {
                 Money principalPaid = installment.payPrincipalComponent(transactionDate, amountRemaining);
                 amountRemaining = amountRemaining.minus(principalPaid);
+                bumpArrearsPortion(arrearsPortions, installment, P_PRINCIPAL, principalPaid, currency);
+            }
+        }
 
-                if (principalPaid.isGreaterThanZero()) {
-                    transactionMappings.add(LoanTransactionToRepaymentScheduleMapping.createFrom(
-                            loanTransaction, installment, principalPaid, Money.zero(currency), Money.zero(currency), Money.zero(currency)
-                    ));
-                }
+        for (Map.Entry<LoanRepaymentScheduleInstallment, Money[]> entry : arrearsPortions.entrySet()) {
+            Money[] p = entry.getValue();
+            if (p[P_PRINCIPAL].plus(p[P_INTEREST]).plus(p[P_FEE]).plus(p[P_PENALTY]).isGreaterThanZero()) {
+                transactionMappings.add(LoanTransactionToRepaymentScheduleMapping.createFrom(loanTransaction, entry.getKey(),
+                        p[P_PRINCIPAL], p[P_INTEREST], p[P_FEE], p[P_PENALTY]));
             }
         }
 
@@ -371,6 +370,17 @@ public class SummationOrderLoanRepaymentScheduleTransactionProcessor extends Abs
 
     private boolean isFutureInstallment(LoanRepaymentScheduleInstallment installment, LocalDate transactionDate) {
         return transactionDate.isBefore(installment.getDueDate());
+    }
+
+    private void bumpArrearsPortion(Map<LoanRepaymentScheduleInstallment, Money[]> portions,
+                                    LoanRepaymentScheduleInstallment installment, int index, Money amount,
+                                    MonetaryCurrency currency) {
+        if (!amount.isGreaterThanZero()) {
+            return;
+        }
+        Money[] slots = portions.computeIfAbsent(installment,
+                k -> new Money[] { Money.zero(currency), Money.zero(currency), Money.zero(currency), Money.zero(currency) });
+        slots[index] = slots[index].plus(amount);
     }
 
     /**
