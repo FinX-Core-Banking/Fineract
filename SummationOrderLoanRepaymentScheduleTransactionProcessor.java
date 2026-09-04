@@ -305,12 +305,6 @@ public class SummationOrderLoanRepaymentScheduleTransactionProcessor extends Abs
 
             if (!firstFutureInstallmentHandled) {
                 Money proratedInterestDue = computeProratedInterest(installment, transactionDate, currency);
-                Money currentInterestOutstanding = installment.getInterestOutstanding(currency);
-                if (proratedInterestDue.isLessThan(currentInterestOutstanding)) {
-                    Money reduction = currentInterestOutstanding.minus(proratedInterestDue);
-                    BigDecimal newInterestCharged = installment.getInterestCharged(currency).minus(reduction).getAmount();
-                    installment.updateInterestCharged(newInterestCharged);
-                }
 
                 Money feePortion = installment.payFeeChargesComponent(transactionDate, amountRemaining);
                 amountRemaining = amountRemaining.minus(feePortion);
@@ -320,15 +314,32 @@ public class SummationOrderLoanRepaymentScheduleTransactionProcessor extends Abs
                         : Money.zero(currency);
                 amountRemaining = amountRemaining.minus(penaltyPortion);
 
-                Money interestPortion = amountRemaining.isGreaterThanZero()
-                        ? installment.payInterestComponent(transactionDate, amountRemaining)
-                        : Money.zero(currency);
-                amountRemaining = amountRemaining.minus(interestPortion);
+                // Pay interest, capped at the prorated (accrued-so-far) amount so the tail that has
+                // not yet accrued is never consumed by this payment.
+                Money interestPortion = Money.zero(currency);
+                if (amountRemaining.isGreaterThanZero() && proratedInterestDue.isGreaterThanZero()) {
+                    Money interestCap = proratedInterestDue.isLessThan(amountRemaining) ? proratedInterestDue : amountRemaining;
+                    interestPortion = installment.payInterestComponent(transactionDate, interestCap);
+                    amountRemaining = amountRemaining.minus(interestPortion);
+                }
 
                 Money principalPortion = amountRemaining.isGreaterThanZero()
                         ? installment.payPrincipalComponent(transactionDate, amountRemaining)
                         : Money.zero(currency);
                 amountRemaining = amountRemaining.minus(principalPortion);
+
+                // Only reduce the scheduled interest when the installment's principal has been fully
+                // paid — that closes the installment cleanly with no phantom outstanding interest.
+                // If principal is still outstanding, leave interestCharged untouched so interest
+                // recalculation regenerates the period's interest against the reduced principal.
+                if (installment.getPrincipalOutstanding(currency).isZero()) {
+                    Money remainingInterestOutstanding = installment.getInterestOutstanding(currency);
+                    if (remainingInterestOutstanding.isGreaterThanZero()) {
+                        BigDecimal newInterestCharged = installment.getInterestCharged(currency)
+                                .minus(remainingInterestOutstanding).getAmount();
+                        installment.updateInterestCharged(newInterestCharged);
+                    }
+                }
 
                 Money total = principalPortion.plus(interestPortion).plus(feePortion).plus(penaltyPortion);
                 if (total.isGreaterThanZero()) {
