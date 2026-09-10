@@ -24,14 +24,9 @@ This lump sum clears the first three months of arrears completely and leaves an 
 
 * Months Covered: June (R3,400), July (R3,400), and August (R3,400) are fully paid.
 * Total for Arrears: R10,200.00 processed.
-* Excess Remaining: R1,400.00. This excess goes toward the 1 September installment, reducing the remaining September amount due to R2,000.00 (R3,400 - R1,400).
+* Excess Remaining: R1,400.00. This excess goes towards:
+	1) paying off the interest owed from the 1st September till the current date. To estimate this, you divide the interest due by the days in period to get the interest due per day. And multiply that by the number of days to the current days.
+	2) reducing the principal due on the loan. Apply Remaining Excess and immediately reduce the principal due of the loan.
+	3) Dynamic Re-calculation: Recalculate interest on the fly based on the exact number of days in the cycle using the newly reduced principal balance
 
-## Payment 2: R3,000.00
-This payment causes a calculation error ("something absurd") in the system.
-------------------------------
-## ⚠️ The Problem: Expected vs. Actual System Behaviour## What the System Should Do (Expected Behaviour)
-Because you paid an extra R3,000.00 on top of your existing R1,400.00 credit, you have advanced a total of R4,400.00 toward future installments. The core system logic should:
-
-   1. Clear September: Use R2,000.00 of the new R3,000.00 payment to fully wipe out the September installment.
-   2. Apply Remaining Excess: Take the remaining R1,000.00 (R3,000 - R2,000) and immediately reduce the principal balance of the loan.
-   3. Dynamic Re-calculation: Recalculate interest on the fly based on the exact number of days in the cycle using the newly reduced principal balance. This should shrink the interest due for October (Repayment 5) and all future months.
+Please remember that step two downwards applies to future records. You don't charge fee, penalties and interest if the date is in future.	
