@@ -1,0 +1,37 @@
+Here is a clear, structured loan scenario and the specific problem we are encountering with the system's repayment allocation.
+------------------------------
+## 📊 Loan Overview & Baseline Schedule
+You have a loan of R28,280.00 disbursed on 1 May. It features a 10-month repayment frequency with a fixed monthly installment of R3,400.00 (comprising R2,410.20 principal and R989.80 interest).
+The baseline schedule for the first five months is structured as follows:
+
+| Installment | Due Date | Days in Period | Principal Due | Interest Due | Fees / Penalties | Total Due | Outstanding Principal Balance |
+|---|---|---|---|---|---|---|---|
+| Disbursement | 01 May | - | - | - | - | - | R28,280.00 |
+| Repayment 1 | 01 June | 31 | R2,410.20 | R989.80 | R0.00 | R3,400.00 | R25,869.80 |
+| Repayment 2 | 01 July | 30 | R2,410.20 | R989.80 | R0.00 | R3,400.00 | R23,459.60 |
+| Repayment 3 | 01 Aug | 31 | R2,410.20 | R989.80 | R0.00 | R3,400.00 | R21,049.40 |
+| Repayment 4 | 01 Sept | 31 | R2,410.20 | R989.80 | R0.00 | R3,400.00 | R18,639.20 |
+| Repayment 5 | 01 Oct | 30 | R2,410.20 | R989.80 | R0.00 | R3,400.00 | R16,229.00 |
+
+------------------------------
+## 📈 Actual Payment History & Allocation
+The mandatory Repayment Strategy dictates that payments must be allocated strictly in this order across all arrears installments:
+
+   1. Fees → 2. Penalties → 3. Interest → 4. Principal
+
+## Payment 1: R11,600.00
+This lump sum clears the first three months of arrears completely and leaves an overpayment for September:
+
+* Months Covered: June (R3,400), July (R3,400), and August (R3,400) are fully paid.
+* Total for Arrears: R10,200.00 processed.
+* Excess Remaining: R1,400.00. This excess goes toward the 1 September installment, reducing the remaining September amount due to R2,000.00 (R3,400 - R1,400).
+
+## Payment 2: R3,000.00
+This payment causes a calculation error ("something absurd") in the system.
+------------------------------
+## ⚠️ The Problem: Expected vs. Actual System Behaviour## What the System Should Do (Expected Behaviour)
+Because you paid an extra R3,000.00 on top of your existing R1,400.00 credit, you have advanced a total of R4,400.00 toward future installments. The core system logic should:
+
+   1. Clear September: Use R2,000.00 of the new R3,000.00 payment to fully wipe out the September installment.
+   2. Apply Remaining Excess: Take the remaining R1,000.00 (R3,000 - R2,000) and immediately reduce the principal balance of the loan.
+   3. Dynamic Re-calculation: Recalculate interest on the fly based on the exact number of days in the cycle using the newly reduced principal balance. This should shrink the interest due for October (Repayment 5) and all future months.
