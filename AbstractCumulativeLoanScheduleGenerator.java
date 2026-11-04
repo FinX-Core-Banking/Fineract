@@ -557,8 +557,8 @@ public abstract class AbstractCumulativeLoanScheduleGenerator implements LoanSch
                             addToPrincipal = addToPrincipal.plus(scheduleParams.getOutstandingBalance());
                             scheduleParams.setOutstandingBalance(Money.zero(currency));
                         }
-                        updateAmountsBasedOnEarlyPayment(loanApplicationTerms, holidayDetailDTO, scheduleParams, modifiedInstallment,
-                                detail, unprocessed, addToPrincipal);
+                        updateAmountsBasedOnEarlyPayment(loanApplicationTerms, holidayDetailDTO, scheduleParams, detail, unprocessed,
+                                addToPrincipal);
 
                         scheduleParams.addReducePrincipal(unprocessed);
                         currentPeriodParams.plusPrincipalForThisPeriod(unprocessed.plus(addToPrincipal));
@@ -863,8 +863,8 @@ public abstract class AbstractCumulativeLoanScheduleGenerator implements LoanSch
                             // updates principal portion map with the early
                             // payment amounts and applicable date as per
                             // rest
-                            updateAmountsBasedOnEarlyPayment(loanApplicationTerms, holidayDetailDTO, scheduleParams, installment, detail,
-                                    unprocessed, addToPrincipal);
+                            updateAmountsBasedOnEarlyPayment(loanApplicationTerms, holidayDetailDTO, scheduleParams, detail, unprocessed,
+                                    addToPrincipal);
 
                             // method applies early payment strategy
                             scheduleParams.addReducePrincipal(unprocessed);
@@ -972,12 +972,14 @@ public abstract class AbstractCumulativeLoanScheduleGenerator implements LoanSch
     }
 
     private void updateAmountsBasedOnEarlyPayment(final LoanApplicationTerms loanApplicationTerms, final HolidayDetailDTO holidayDetailDTO,
-            LoanScheduleParams scheduleParams, final LoanScheduleModelPeriod installment, RecalculationDetail detail, Money unprocessed,
-            Money addToPrincipal) {
-        updatePrincipalPaidPortionToMap(loanApplicationTerms, holidayDetailDTO, scheduleParams.getPrincipalPortionMap(), installment,
-                detail, unprocessed.plus(addToPrincipal), scheduleParams.getInstallments());
-        scheduleParams.addTotalRepaymentExpected(unprocessed.plus(addToPrincipal));
-        scheduleParams.addTotalCumulativePrincipal(unprocessed.plus(addToPrincipal));
+            LoanScheduleParams scheduleParams, RecalculationDetail detail, Money unprocessed, Money addToPrincipal) {
+        // Reduce the outstanding balance used for interest recalculation only. The early/backdated surplus is
+        // intentionally not added to the schedule's cumulative principal or expected repayment, and not baked
+        // into any row's principal, so the schedule keeps its amortized rows and the subsequent transaction
+        // reprocessing allocates the surplus across the following installment(s) by the configured repayment
+        // strategy instead of forcing it onto principal.
+        updatePrincipalPaidPortionToMap(loanApplicationTerms, holidayDetailDTO, scheduleParams.getPrincipalPortionMap(), detail,
+                unprocessed.plus(addToPrincipal));
     }
 
     private void updateOutstandingBalanceAsPerRest(LoanApplicationTerms loanApplicationTerms, final LoanScheduleParams scheduleParams,
@@ -1866,22 +1868,16 @@ public abstract class AbstractCumulativeLoanScheduleGenerator implements LoanSch
      *
      */
     private void updatePrincipalPaidPortionToMap(final LoanApplicationTerms loanApplicationTerms, final HolidayDetailDTO holidayDetailDTO,
-            Map<LocalDate, Money> principalPortionMap, final LoanScheduleModelPeriod installment, final RecalculationDetail detail,
-            final Money unprocessed, final List<LoanRepaymentScheduleInstallment> installments) {
+            Map<LocalDate, Money> principalPortionMap, final RecalculationDetail detail, final Money unprocessed) {
         LocalDate applicableDate = getNextRestScheduleDate(detail.getTransactionDate().minusDays(1), loanApplicationTerms,
                 holidayDetailDTO);
+        // Record the early/backdated surplus only as an outstanding-balance reduction for interest
+        // recalculation. The surplus is intentionally NOT baked into any schedule row's principal: previously
+        // it was added to the paid period and carried onto the last installment, which forced the whole
+        // overpayment onto principal. Instead every row keeps its amortized principal/interest, and the
+        // subsequent transaction reprocessing allocates the surplus across the following installment(s) using
+        // the configured repayment strategy. This mirrors updateEarlyPaidAmountsToMap(), which only updates the map.
         updateMapWithAmount(principalPortionMap, unprocessed, applicableDate);
-        // An early/backdated overpayment must not be booked as principal onto a period that is under a
-        // principal-payment grace (moratorium): that period carries no principal obligation. The excess still
-        // reduces the outstanding balance (principalPortionMap update above) and is carried onto the last
-        // installment below, so it reduces the bullet instead of violating the moratorium.
-        if (!loanApplicationTerms.isPrincipalGraceApplicableForThisPeriod(installment.periodNumber())) {
-            installment.addPrincipalAmount(unprocessed);
-        }
-        LoanRepaymentScheduleInstallment lastInstallment = installments.stream().filter(i -> !i.isDownPayment())
-                .reduce((first, second) -> second).orElseThrow();
-        lastInstallment.updatePrincipal(lastInstallment.getPrincipal(unprocessed.getCurrency()).plus(unprocessed).getAmount());
-        lastInstallment.payPrincipalComponent(detail.getTransactionDate(), unprocessed);
     }
 
     /**
